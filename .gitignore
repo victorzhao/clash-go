@@ -32,3 +32,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# App binaries and builds
+/clash-go
+/clash-go.exe
+/build/
+/.mygo/
+*.syso
