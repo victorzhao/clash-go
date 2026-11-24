@@ -27,7 +27,7 @@ func cardHead(c *ui.Context, ic *ui.SVG, label string) {
 }
 
 func (a *App) dashboardPage(c *ui.Context) {
-	ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
+	ui.Column(c).Fill().Padding(14).Gap(8).Children(func() {
 		a.dashHeader(c)
 
 		ui.Row(c).Gap(12).AlignItems(ui.Stretch).Children(func() {
@@ -49,7 +49,7 @@ func (a *App) dashboardPage(c *ui.Context) {
 			a.memoryCard(c)
 		})
 
-		ui.Row(c).Gap(12).AlignItems(ui.Stretch).Grow(1).MinHeight(120).Children(func() {
+		ui.Row(c).Gap(12).AlignItems(ui.Stretch).Grow(1).Children(func() {
 			a.requestsCard(c)
 			a.groupsCard(c)
 		})
@@ -106,17 +106,30 @@ func (a *App) statusCard(c *ui.Context) {
 		})
 
 		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+			// The node the profile selects takes the card's big line; the
+			// machine's own address has a card of its own.
+			node, delay, connected := a.nodeStatus()
+			title := "未选择节点"
+			if node != "" {
+				title = node
+			}
 			ui.Column(c).Gap(6).Grow(1).Children(func() {
-				ui.Text(c, a.lanIP).FontSize(26).Bold().SingleLine().FontFeatures("tnum")
+				ui.Text(c, title).FontSize(24).Bold().SingleLine()
+				if server := a.nodeServer(node); server != "" {
+					ui.Text(c, "服务器 "+server).FontSize(11).TextColor(t.TextMuted).
+						FontFeatures("tnum").SingleLine()
+				}
 				ui.Row(c).Gap(6).Children(func() {
-					ui.Badge(c, "局域网").Background(pillColor(c)).TextColor(t.TextMuted)
 					if running {
 						ui.Badge(c, "内核在线").Background(t.Accent.Alpha(0.12)).TextColor(t.Accent)
 					}
-					if node, _, connected := a.nodeStatus(); node != "" {
+					if node != "" {
 						switch {
 						case connected:
 							ui.Badge(c, "节点已连接").Background(ui.Hex("#22c55e").Alpha(0.16)).TextColor(ui.Hex("#16a34a"))
+							if quality := nodeQuality(delay); quality != "" {
+								ui.Badge(c, quality).Background(pillColor(c)).TextColor(t.TextMuted)
+							}
 						case a.nodeTested:
 							ui.Badge(c, "节点未连接").Background(t.Danger.Alpha(0.14)).TextColor(t.Danger)
 						default:
@@ -124,6 +137,24 @@ func (a *App) statusCard(c *ui.Context) {
 						}
 					}
 				})
+				// The plan the subscription reports: what is left, of how much.
+				if p, ok := a.activeProfile(); ok && p.Type == "local" {
+					ui.Text(c, "本地配置 · 无订阅额度信息").FontSize(10).TextColor(t.TextMuted).SingleLine()
+				}
+				if p, ok := a.activeProfile(); ok && p.Total > 0 {
+					left := p.Total - p.Used
+					if left < 0 {
+						left = 0
+					}
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Progress(c, float64(p.Used)/float64(p.Total)).Label("订阅流量")
+						line := fmt.Sprintf("剩余 %s · 总 %s", formatBytes(left), formatBytes(p.Total))
+						if !p.Expire.IsZero() {
+							line += " · 到期 " + p.Expire.Local().Format("2006-01-02")
+						}
+						ui.Text(c, line).FontSize(10).TextColor(t.TextMuted).SingleLine()
+					})
+				}
 			})
 			// A soft blue blob behind the button, as on FlClash's status card.
 			ui.Box(c).Size(110, 110).Center().Draw(func(p *ui.Painter, r ui.Rect) {
@@ -176,12 +207,8 @@ func (a *App) statusCard(c *ui.Context) {
 				profile = p.Name
 			}
 			info("当前配置", profile)
-			if node, delay, connected := a.nodeStatus(); node != "" {
-				value := node
-				if connected {
-					value += " · " + delayText(delay)
-				}
-				info("节点", value)
+			if _, delay, connected := a.nodeStatus(); connected {
+				info("节点延迟", delayText(delay))
 			}
 		})
 	})
@@ -327,8 +354,9 @@ func (a *App) lanCard(c *ui.Context) {
 
 func (a *App) configCard(c *ui.Context) {
 	t := c.Theme()
-	box := ui.ButtonBase(c.Key("dash-config")).Grow(1).Basis(0).MinWidth(0).Padding(16).Gap(8).Radius(16).
-		Background(cardColor(c)).Shadow(0, 1, 3, 0, cardShadow(c)).AlignItems(ui.Stretch)
+	box := ui.ButtonBase(c.Key("dash-config")).Grow(1).Basis(0).MinWidth(0).Padding(18).Gap(8).Radius(20).
+		Background(cardColor(c)).Border(1, cardEdge(c)).Shadow(0, 2, 8, 0, cardShadow(c)).AlignItems(ui.Stretch).
+		Transition(ui.ElementTransition{Colors: true})
 	box.Children(func() {
 		ui.Column(c).Gap(6).Grow(1).Children(func() {
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -362,6 +390,7 @@ func (a *App) configCard(c *ui.Context) {
 				count("代理", proxies)
 				count("规则", len(a.rules))
 			})
+
 		})
 	})
 	if box.Hovered() {
@@ -759,4 +788,18 @@ func (a *App) dashTabs(c *ui.Context) {
 			})
 		}
 	})
+}
+
+// nodeQuality names a delay as FlClash's status card does.
+func nodeQuality(delay int) string {
+	switch {
+	case delay <= 0:
+		return ""
+	case delay < 200:
+		return "质量优"
+	case delay < 500:
+		return "质量良"
+	default:
+		return "质量差"
+	}
 }

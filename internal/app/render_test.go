@@ -84,6 +84,26 @@ func TestRender(t *testing.T) {
 	}
 	t.Log(filepath.Join(dir, "dashboard-small.png"))
 
+	local := demoApp(t, "/dashboard")
+	local.profiles = []store.Profile{{ID: "local", Name: "Tokyo-Reality", Type: "local", UpdatedAt: time.Now()}}
+	local.settings.ActiveProfile = "local"
+	if err := local.st.WriteProfile("local", []byte(`proxies:
+  - {name: 香港 01, type: vless, server: 43.167.27.194, port: 443}
+`)); err != nil {
+		t.Fatal(err)
+	}
+	localTT := ui.NewTester(local.View, 1200, 780)
+	localTT.Frame()
+	lf, err := os.Create(filepath.Join(dir, "dashboard-local.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := png.Encode(lf, localTT.Image()); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(filepath.Join(dir, "dashboard-local.png"))
+
 	dark := demoApp(t, "/dashboard")
 	dark.settings.Theme = "dark"
 	darkTT := ui.NewTester(dark.View, 1200, 780)
@@ -118,7 +138,9 @@ func demoApp(t *testing.T, page string) *App {
 	}
 	a.version = "v1.19.34"
 	a.settings.ActiveProfile = "demo"
-	a.profiles = []store.Profile{{ID: "demo", Name: "机场订阅", Type: "remote", URL: "https://example.com/sub", UpdatedAt: time.Now()}}
+	a.profiles = []store.Profile{{ID: "demo", Name: "机场订阅", Type: "remote", URL: "https://example.com/sub",
+		UpdatedAt: time.Now(), Used: 23 << 30, Total: 100 << 30,
+		Expire: time.Now().Add(20 * 24 * time.Hour)}}
 	if err := a.st.WriteProfile("demo", []byte(demoProfile)); err != nil {
 		t.Fatal(err)
 	}

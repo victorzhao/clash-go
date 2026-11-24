@@ -102,6 +102,11 @@ type App struct {
 	dashTab            int
 	dashConn           ui.ListState
 	dashList           ui.ListState
+	// servers maps a proxy's name to its server address, for the profile
+	// serversFor; it is read from the profile when the status card asks.
+	servers    map[string]string
+	serversFor string
+
 	// The profile shown on the configuration page, and its editor.
 	viewID     string
 	viewText   string
@@ -434,6 +439,7 @@ func (a *App) startCore() {
 				a.setErr("")
 				a.startedAt = time.Now()
 				a.toastText = "内核已启动"
+				a.refreshTray()
 				a.testSite()
 			}
 		})
@@ -452,6 +458,7 @@ func (a *App) stopCore() {
 			a.running.Store(false)
 			a.startedAt = time.Time{}
 			a.toastText = "内核已停止"
+			a.refreshTray()
 			a.history = nil
 			a.up, a.down = 0, 0
 		})
@@ -775,6 +782,44 @@ func siteReachable(site string, port int) (int, error) {
 	return ms, nil
 }
 
+// nodeServer returns where the proxy named name connects, as the profile
+// gives it ("43.167.27.194:443"), or "" for a node of a provider, which the
+// profile's file does not hold.
+func (a *App) nodeServer(name string) string {
+	p, ok := a.activeProfile()
+	if !ok {
+		return ""
+	}
+	if a.serversFor != p.ID {
+		a.serversFor = p.ID
+		a.servers = nil
+		if content, err := a.st.ProfileContent(p.ID); err == nil {
+			var cfg struct {
+				Proxies []struct {
+					Name   string `yaml:"name"`
+					Server string `yaml:"server"`
+					Port   any    `yaml:"port"`
+				} `yaml:"proxies"`
+			}
+			if yaml.Unmarshal(content, &cfg) == nil {
+				servers := make(map[string]string, len(cfg.Proxies))
+				for _, proxy := range cfg.Proxies {
+					if proxy.Server == "" {
+						continue
+					}
+					address := proxy.Server
+					if proxy.Port != nil {
+						address += ":" + fmt.Sprint(proxy.Port)
+					}
+					servers[proxy.Name] = address
+				}
+				a.servers = servers
+			}
+		}
+	}
+	return a.servers[name]
+}
+
 // nodeStatus returns the node the profile selects, its last delay, and
 // whether it connects.
 func (a *App) nodeStatus() (string, int, bool) {
@@ -792,40 +837,41 @@ func (a *App) nodeStatus() (string, int, bool) {
 	return g.Now, delay, delay > 0
 }
 
-// trayItems describes the tray's right-click menu: the window, the mode,
-// the core, and quitting.
-func (a *App) trayItems() []trayMenuItem {
-	items := []trayMenuItem{
-		{label: "显示主窗口", onClick: a.showWindow},
-		sepItem(),
-		{label: "模式", submenu: []trayMenuItem{
-			{label: "规则", checked: a.settings.Mode == "rule", radio: true, onClick: func() { a.setMode("rule") }},
-			{label: "全局", checked: a.settings.Mode == "global", radio: true, onClick: func() { a.setMode("global") }},
-			{label: "直连", checked: a.settings.Mode == "direct", radio: true, onClick: func() { a.setMode("direct") }},
-		}},
-		sepItem(),
-	}
+// trayMenu builds the tray's menu, which MyGo shows on a right click, as
+// the app's other menus.
+func (a *App) trayMenu() *mygo.Menu {
+	check := func(mode string) bool { return a.settings.Mode == mode }
+	core := &mygo.MenuItem{Label: "启动内核", Click: func(*mygo.MenuItem, *mygo.Window) { a.startCore() }}
 	if a.running.Load() {
-		items = append(items, trayMenuItem{label: "停止内核", onClick: a.stopCore})
-	} else {
-		items = append(items, trayMenuItem{label: "启动内核", onClick: a.startCore})
+		core = &mygo.MenuItem{Label: "停止内核", Click: func(*mygo.MenuItem, *mygo.Window) { a.stopCore() }}
 	}
-	items = append(items, sepItem(), trayMenuItem{label: "退出", onClick: func() { mygo.App.Quit() }})
-	return items
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "显示主窗口", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+		mygo.Separator(),
+		{Label: "模式", Submenu: []*mygo.MenuItem{
+			{Label: "规则", Type: mygo.MenuItemRadio, Checked: check("rule"), Click: func(*mygo.MenuItem, *mygo.Window) { a.setMode("rule") }},
+			{Label: "全局", Type: mygo.MenuItemRadio, Checked: check("global"), Click: func(*mygo.MenuItem, *mygo.Window) { a.setMode("global") }},
+			{Label: "直连", Type: mygo.MenuItemRadio, Checked: check("direct"), Click: func(*mygo.MenuItem, *mygo.Window) { a.setMode("direct") }},
+		}},
+		mygo.Separator(),
+		core,
+		mygo.Separator(),
+		{Role: mygo.RoleQuit},
+	})
 }
 
-// refreshTray is kept for callers that previously rebuilt the native menu;
-// with the on-demand menu there is nothing persistent to refresh, so it is
-// a no-op.
-func (a *App) refreshTray() {}
+// refreshTray gives the tray its menu again, for the state it shows.
+func (a *App) refreshTray() {
+	if a.tray != nil {
+		a.tray.SetMenu(a.trayMenu())
+	}
+}
 
 // SetTray keeps the tray icon the app created and wires its right-click to
 // open the menu above the icon.
 func (a *App) SetTray(t *mygo.Tray) {
 	a.tray = t
-	if t != nil {
-		t.OnRightClick(func() { showTrayMenu(t, a.trayItems(), a.menuOwner()) })
-	}
+	a.refreshTray()
 }
 
 // showWindow brings the main window to the front.
